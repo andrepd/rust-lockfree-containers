@@ -8,12 +8,14 @@ use std::{sync::atomic::{AtomicUsize, Ordering}, mem::MaybeUninit, cell::UnsafeC
 /// blocks while the queue is full (until some `pop` drains a space), and `pop`pping blocks while
 /// the queue is empty (until some `push` gives us a value to return).
 #[derive(Debug)]
-pub struct Queue<T, const N: usize = 4096> {
+pub struct Queue<T, const N_ORIG: usize = 4096> 
+  where [UnsafeCell<MaybeUninit<T>>; next_pow2(N_ORIG)]: Sized
+{
   // Sounds scary and unsafe, but note we actually don't ever return references to elements of
   // `data`, we just move from and into it, therefore the correctness invariants that we have to
   // keep in mind are much simplified; we basically just need to ensure we don't overwrite
   // elements that haven't been moved out, and don't move out cells that haven't been written to.
-  data: [UnsafeCell<MaybeUninit<T>>; N],
+  data: [UnsafeCell<MaybeUninit<T>>; next_pow2(N_ORIG)],
   // TODO: look into how to add padding between these elements, to avoid false sharing
   write_head: AtomicUsize,
   write_tail: AtomicUsize,
@@ -21,8 +23,24 @@ pub struct Queue<T, const N: usize = 4096> {
   read_tail: AtomicUsize,
 }
 
-unsafe impl<T, const N: usize> Send for Queue<T, N> {}
-unsafe impl<T, const N: usize> Sync for Queue<T, N> {}
+unsafe impl<T, const N_ORIG: usize> Send for Queue<T, N_ORIG> 
+  where [UnsafeCell<MaybeUninit<T>>; next_pow2(N_ORIG)]: Sized
+  {}
+unsafe impl<T, const N_ORIG: usize> Sync for Queue<T, N_ORIG> 
+  where [UnsafeCell<MaybeUninit<T>>; next_pow2(N_ORIG)]: Sized
+  {}
+
+const fn next_pow2(x: usize) -> usize {
+  // https://graphics.stanford.edu/%7Eseander/bithacks.html#RoundUpPowerOf2
+  let x = x - 1;
+  let x = x | (x >> 1);
+  let x = x | (x >> 2);
+  let x = x | (x >> 4);
+  let x = x | (x >> 8);
+  let x = x | (x >> 16);
+  let x = x | (x >> 32);
+  x + 1
+}
 
 // Buffer layout diagram (wraps modulo N):
 //
@@ -30,15 +48,18 @@ unsafe impl<T, const N: usize> Sync for Queue<T, N> {}
 //          ^           ^                  ^            ^
 //          read_head   read_tail          write_head   write_tail
 
-impl<T, const N: usize> Queue<T, N> {
+impl<T, const N_ORIG: usize> Queue<T, N_ORIG>
+  where [UnsafeCell<MaybeUninit<T>>; next_pow2(N_ORIG)]: Sized
+{
+  const N: usize = next_pow2(N_ORIG);
+
   const EMPTY: UnsafeCell<MaybeUninit<T>> = UnsafeCell::new(MaybeUninit::uninit());
 
-  // TODO: figure out how to round N to a power-of-2 at compile-time
-  const MASK: usize = N - 1;
+  const MASK: usize = Self::N - 1;
 
   pub fn new() -> Self {
     Self {
-      data: [Self::EMPTY; N],
+      data: [Self::EMPTY; next_pow2(N_ORIG)],
       write_head: AtomicUsize::new(0),
       read_head: AtomicUsize::new(0),
       write_tail: AtomicUsize::new(0),
@@ -63,7 +84,7 @@ impl<T, const N: usize> Queue<T, N> {
       let read_tail = self.read_tail.load(Ordering::Acquire);
       // If write_head == read_tail + N, the queue is full (we would be overwriting existing
       // elements if we wrote to write_head)
-      if write_head < read_tail + N {
+      if write_head < read_tail + Self::N {
         // Now this is where we use CAS to ensure that we are incrementing write_head. If the value
         // has changed in the meantime, `compare_exchange_weak` will fail, let us now the updated
         // value of write_head, and we try again with that value
@@ -128,7 +149,7 @@ impl<T, const N: usize> Queue<T, N> {
   }
 
   pub fn is_full(&self) -> bool {
-    self.write_head.load(Ordering::Relaxed) == self.read_tail.load(Ordering::Relaxed) + N
+    self.write_head.load(Ordering::Relaxed) == self.read_tail.load(Ordering::Relaxed) + Self::N
   }
 }
 
