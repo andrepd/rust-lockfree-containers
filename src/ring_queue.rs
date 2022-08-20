@@ -8,6 +8,7 @@ use std::{sync::atomic::{AtomicUsize, Ordering}, mem::MaybeUninit, cell::UnsafeC
 /// blocks while the queue is full (until some `pop` drains a space), and `pop`pping blocks while
 /// the queue is empty (until some `push` gives us a value to return).
 #[derive(Debug)]
+#[repr(C)]
 pub struct Queue<T, const N_ORIG: usize = 4096> 
   where [UnsafeCell<MaybeUninit<T>>; next_pow2(N_ORIG)]: Sized
 {
@@ -18,8 +19,11 @@ pub struct Queue<T, const N_ORIG: usize = 4096>
   data: [UnsafeCell<MaybeUninit<T>>; next_pow2(N_ORIG)],
   // TODO: look into how to add padding between these elements, to avoid false sharing
   write_head: AtomicUsize,
+  _pad1: [u8; 56],
   write_tail: AtomicUsize,
+  _pad2: [u8; 56],
   read_head: AtomicUsize,
+  _pad3: [u8; 56],
   read_tail: AtomicUsize,
 }
 
@@ -64,6 +68,9 @@ impl<T, const N_ORIG: usize> Queue<T, N_ORIG>
       read_head: AtomicUsize::new(0),
       write_tail: AtomicUsize::new(0),
       read_tail: AtomicUsize::new(0),
+      _pad1: [0; 56],
+      _pad2: [0; 56],
+      _pad3: [0; 56],
     }
   }
 
