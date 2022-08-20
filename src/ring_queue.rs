@@ -1,8 +1,6 @@
 use std::{sync::atomic::{AtomicUsize, Ordering}, mem::MaybeUninit, cell::UnsafeCell};
 
-// TODO: minimise false sharing, by making it so that subsequent elements don't go in adjacent
-// cache lines (this is a case where memory locality doesn't necessariliy mean better
-// performance!)
+// TODO: how to portably minimise false sharing
 
 /// A lock-free ring queue of a fixed size, supporting multiple readers and writers. It is
 /// lock-free but not *wait*-free, as `push`ing blocks while the queue is full (until some `pop`
@@ -18,7 +16,10 @@ pub struct Queue<T, const N_ORIG: usize = 4096>
   // keep in mind are much simplified; we basically just need to ensure we don't overwrite
   // elements that haven't been moved out, and don't move out cells that haven't been written to.
   data: [UnsafeCell<MaybeUninit<T>>; next_pow2(N_ORIG)],
-  // TODO: look into how to add padding between these elements, to avoid false sharing
+  // We add padding between the atomics (see the #[repr(C)]) to avoid false sharing, by making it
+  // so that subsequent elements don't go in adjacent cache lines (this is a case where memory
+  // locality doesn't necessariliy mean better performance!).
+  // TODO: How to do this portably! Probably with alignment primitives.
   write_head: AtomicUsize,
   _pad1: [u8; 56],
   write_tail: AtomicUsize,
