@@ -4,9 +4,10 @@ use std::{sync::atomic::{AtomicUsize, Ordering}, mem::MaybeUninit, cell::UnsafeC
 // cache lines (this is a case where memory locality doesn't necessariliy mean better
 // performance!)
 
-/// A lock-free ring queue of a fixed size. It is lock-free but not *wait*-free, as `push`ing
-/// blocks while the queue is full (until some `pop` drains a space), and `pop`pping blocks while
-/// the queue is empty (until some `push` gives us a value to return).
+/// A lock-free ring queue of a fixed size, supporting multiple readers and writers. It is
+/// lock-free but not *wait*-free, as `push`ing blocks while the queue is full (until some `pop`
+/// drains a space), and `pop`pping blocks while the queue is empty (until some `push` gives us a
+/// value to return).
 #[derive(Debug)]
 #[repr(C)]
 pub struct Queue<T, const N_ORIG: usize = 4096> 
@@ -172,7 +173,7 @@ mod test {
     const N_WRITERS: usize = 2;
 
     // Change these to introduce delay to one or both of them
-    const READER_DELAY: std::time::Duration = std::time::Duration::from_millis(0);
+    const READER_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
     const WRITER_DELAY: std::time::Duration = std::time::Duration::from_millis(0);
 
     let queue = Queue::<(usize, usize)>::new();
@@ -185,13 +186,13 @@ mod test {
           let mut highest = [-1isize; N_WRITERS];
           loop {
             let (thread_id, counter) = queue.pop();
+            /*println!("r {thread_id} {counter}");*/
             if N_READERS == 1 {
               assert!(counter as isize == highest[thread_id] + 1)
             } else {
               assert!(counter as isize > highest[thread_id]);
             }
             highest[thread_id] = counter as isize;
-            /*println!("r {thread_id} {counter}");*/
             std::thread::sleep(READER_DELAY);
           }
         });
@@ -204,8 +205,8 @@ mod test {
           let mut counter = 0usize;
           loop {
             queue.push((thread_id, counter));
-            counter += 1;
             /*println!("w {thread_id} {counter}");*/
+            counter += 1;
             std::thread::sleep(WRITER_DELAY);
           }
         });
